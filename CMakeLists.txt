@@ -18,10 +18,11 @@ set_directory_properties( PROPERTIES
 set( TARGET_NAME myDirextX12Learning )
 
 set( HEADER_FILES
+    inc/d3dx12.h
 )
 
 set( SRC_FILES
-  src/main.cpp
+    src/main.cpp
 )
 
 add_executable( ${TARGET_NAME} WIN32
@@ -30,7 +31,7 @@ add_executable( ${TARGET_NAME} WIN32
 )
 
 target_include_directories( ${TARGET_NAME} PUBLIC
-  ${CMAKE_CURRENT_SOURCE_DIR}/inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/inc
 )
 
 target_link_libraries( ${TARGET_NAME}
