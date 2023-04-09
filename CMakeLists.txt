@@ -19,6 +19,7 @@ set( TARGET_NAME myDirextX12Learning )
 
 set( HEADER_FILES
     inc/d3dx12.h
+    inc/Helpers.h
 )
 
 set( SRC_FILES
