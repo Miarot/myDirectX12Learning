@@ -50,15 +50,6 @@ uint32_t g_ClientHeight = 720;
 // Set to true once the DX12 objects have been initialized.
 bool g_IsInitialized = false;
 
-// Enable the D3D12 debug layer.
-void EnableDebugLayer() {
-#if defined(_DEBUG)
-	ComPtr<ID3D12Debug> debugInterface;
-	ThrowIfFailed(D3D12GetDebugInterface(IID_PPV_ARGS(&debugInterface)));
-	debugInterface->EnableDebugLayer();
-#endif
-}
-
 // Window handle.
 HWND g_hWnd;
 // Window rectangle (used to toggle fullscreen state).
@@ -68,14 +59,40 @@ RECT g_WindowRect;
 ComPtr<ID3D12Device2> g_Device;
 ComPtr<ID3D12CommandQueue> g_CommandQueue;
 ComPtr<ID3D12GraphicsCommandList> g_CommandList;
-ComPtr<ID3D12CommandAllocator> g_CommandAllocator;
+ComPtr<ID3D12CommandAllocator> g_CommandAllocator[g_NumFrames];
 ComPtr<IDXGISwapChain4> g_SwapChain;
+ComPtr<ID3D12Resource> g_BackBuffers[g_NumFrames];
+ComPtr<ID3D12DescriptorHeap> g_RTVDescriptorHeap;
+UINT g_RTVDescriptorSize;
+UINT g_CurrentBackBufferIndex;
 
 // Synchronization objects
 ComPtr<ID3D12Fence> g_Fence;
+uint64_t g_FenceValue = 0;
+uint64_t g_FrameFenceValues[g_NumFrames] = {};
+HANDLE g_FenceEvent;
+
+// By default, enable V-Sync.
+// Can be toggled with the V key.
+bool g_VSync = true;
+bool g_TearingSupported = false;
+// By default, use windowed mode.
+// Can be toggled with the Alt+Enter or F11
+bool g_Fullscreen = false;
+
+const uint32_t g_NumBackgroundColors = 6;
+FLOAT g_BackgroundColors[g_NumBackgroundColors][4] = {
+	{ 0.4f, 0.6f, 0.9f, 1.0f },
+	{ 1.0f, 1.0f, 1.0f, 1.0f },
+	{ 0.0f, 0.0f, 0.0f, 1.0f },
+	{ 1.0f, 0.0f, 0.0f, 1.0f },
+	{ 0.0f, 1.0f, 0.0f, 1.0f },
+	{ 0.0f, 0.0f, 1.0f, 1.0f },
+};
+UINT g_BackgroundColorsIndex = 0;
 
 // Window callback function.
-//LRESULT CALLBACK WndProc(HWND, UINT, WPARAM, LPARAM);
+LRESULT CALLBACK WndProc(HWND, UINT, WPARAM, LPARAM);
 
 void ParseCommandLineArguments() {
 	int argc;
@@ -101,26 +118,26 @@ void ParseCommandLineArguments() {
 	::LocalFree(argv);
 }
 
-//void RegisterWindowClass(HINSTANCE hInst, const wchar_t* windowClassName) {
-//	// Register a window class for creating our render window with.
-//	WNDCLASSEXW windowClass = {};
-//
-//	windowClass.cbSize = sizeof(WNDCLASSEX);
-//	windowClass.style = CS_HREDRAW | CS_VREDRAW;
-//	windowClass.lpfnWndProc = &WndProc;
-//	windowClass.cbClsExtra = 0;
-//	windowClass.cbWndExtra = 0;
-//	windowClass.hInstance = hInst;
-//	windowClass.hIcon = ::LoadIcon(hInst, NULL);
-//	windowClass.hCursor = ::LoadCursor(NULL, IDC_ARROW);
-//	windowClass.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
-//	windowClass.lpszMenuName = NULL;
-//	windowClass.lpszClassName = windowClassName;
-//	windowClass.hIconSm = ::LoadIcon(hInst, NULL);
-//
-//	static ATOM atom = ::RegisterClassExW(&windowClass);
-//	assert(atom > 0);
-//}
+void RegisterWindowClass(HINSTANCE hInst, const wchar_t* windowClassName) {
+	// Register a window class for creating our render window with.
+	WNDCLASSEXW windowClass = {};
+
+	windowClass.cbSize = sizeof(WNDCLASSEX);
+	windowClass.style = CS_HREDRAW | CS_VREDRAW;
+	windowClass.lpfnWndProc = &WndProc;
+	windowClass.cbClsExtra = 0;
+	windowClass.cbWndExtra = 0;
+	windowClass.hInstance = hInst;
+	windowClass.hIcon = ::LoadIcon(hInst, NULL);
+	windowClass.hCursor = ::LoadCursor(NULL, IDC_ARROW);
+	windowClass.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
+	windowClass.lpszMenuName = NULL;
+	windowClass.lpszClassName = windowClassName;
+	windowClass.hIconSm = ::LoadIcon(hInst, NULL);
+
+	static ATOM atom = ::RegisterClassExW(&windowClass);
+	assert(atom > 0);
+}
 
 HWND CreateWindow(
 	const wchar_t* windowClassName,
@@ -160,6 +177,15 @@ HWND CreateWindow(
 	assert(hWnd && "Failed to create window");
 
 	return hWnd;
+}
+
+// Enable the D3D12 debug layer.
+void EnableDebugLayer() {
+#if defined(_DEBUG)
+	ComPtr<ID3D12Debug> debugInterface;
+	ThrowIfFailed(D3D12GetDebugInterface(IID_PPV_ARGS(&debugInterface)));
+	debugInterface->EnableDebugLayer();
+#endif
 }
 
 ComPtr<IDXGIAdapter4> GetAdapter(bool useWarp) {
@@ -248,18 +274,6 @@ ComPtr<ID3D12Device2> GetDevice(ComPtr<IDXGIAdapter4> adapter) {
 #endif
 
 	return d3d12Device2;
-}
-
-ComPtr<ID3D12Fence> CreateFence(ComPtr<ID3D12Device2> device) {
-	ComPtr<ID3D12Fence> fence;
-
-	ThrowIfFailed(device->CreateFence(
-		0,
-		D3D12_FENCE_FLAG_NONE,
-		IID_PPV_ARGS(&fence)
-	));
-
-	return fence;
 }
 
 ComPtr<ID3D12CommandQueue> CreateCommandQueue(
@@ -400,13 +414,302 @@ ComPtr<ID3D12DescriptorHeap> CreateDescriptorHeap(
 	return descriptroHeap;
 }
 
+void UpdateRenderTargetViews(
+	ComPtr<ID3D12Device2> device,
+	ComPtr<IDXGISwapChain4> swapChain,
+	ComPtr<ID3D12DescriptorHeap> descriptorHeap)
+{
+	auto rtvDescriptorSize = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
+
+	CD3DX12_CPU_DESCRIPTOR_HANDLE rtvHandle(descriptorHeap->GetCPUDescriptorHandleForHeapStart());
+
+	for (int i = 0; i < g_NumFrames; ++i) {
+		ComPtr<ID3D12Resource> backBuffer;
+
+		ThrowIfFailed(swapChain->GetBuffer(i, IID_PPV_ARGS(&backBuffer)));
+
+		device->CreateRenderTargetView(backBuffer.Get(), nullptr, rtvHandle);
+
+		g_BackBuffers[i] = backBuffer;
+
+		rtvHandle.Offset(rtvDescriptorSize);
+	}
+}
+
+ComPtr<ID3D12Fence> CreateFence(ComPtr<ID3D12Device2> device) {
+	ComPtr<ID3D12Fence> fence;
+
+	ThrowIfFailed(device->CreateFence(
+		0,
+		D3D12_FENCE_FLAG_NONE,
+		IID_PPV_ARGS(&fence)
+	));
+
+	return fence;
+}
+
+HANDLE CreateEventHandle() {
+	HANDLE fenceEvent;
+
+	fenceEvent = ::CreateEvent(NULL, FALSE, FALSE, NULL);
+	assert(fenceEvent && "Failed to create fence event.");
+
+	return fenceEvent;
+}
+
+uint64_t Signal(ComPtr<ID3D12CommandQueue> commandQueue, ComPtr<ID3D12Fence> fence, uint64_t& fenceValue) {
+	uint64_t fenceValueForSignal = ++fenceValue;
+	ThrowIfFailed(commandQueue->Signal(fence.Get(), fenceValueForSignal));
+
+	return fenceValueForSignal;
+}
+
+void WaitForFenceValue(
+	ComPtr<ID3D12Fence> fence,
+	uint64_t fenceValue,
+	HANDLE fenceEvent,
+	std::chrono::microseconds duration = std::chrono::microseconds::max())
+{
+	if (fence->GetCompletedValue() < fenceValue) {
+		ThrowIfFailed(fence->SetEventOnCompletion(fenceValue, fenceEvent));
+		::WaitForSingleObject(fenceEvent, static_cast<DWORD>(duration.count()));
+	}
+}
+
+void Flush(ComPtr<ID3D12CommandQueue> commandQueue, ComPtr<ID3D12Fence> fence,
+	uint64_t& fenceValue, HANDLE fenceEvent)
+{
+	uint64_t fenceValueForSignal = Signal(commandQueue, fence, fenceValue);
+	WaitForFenceValue(fence, fenceValueForSignal, fenceEvent);
+}
+
+void Update() {
+	static uint64_t frameCounter = 0;
+	static double elapsedSeconds = 0.0;
+	static std::chrono::high_resolution_clock clock;
+	static auto t0 = clock.now();
+
+	++frameCounter;
+	auto t1 = clock.now();
+	auto deltaTime = t1 - t0;
+	t0 = t1;
+
+	elapsedSeconds += deltaTime.count() * 1e-9;
+
+	if (elapsedSeconds > 1.0) {
+		char buffer[500];
+		auto fps = frameCounter / elapsedSeconds;
+		sprintf_s(buffer, 500, "FPS: %f\n", fps);
+		OutputDebugString(buffer);
+
+		frameCounter = 0;
+		elapsedSeconds = 0.0;
+	}
+}
+
+void Render() {
+	auto commandAllocator = g_CommandAllocator[g_CurrentBackBufferIndex];
+	auto backBuffer = g_BackBuffers[g_CurrentBackBufferIndex];
+
+	commandAllocator->Reset();
+	g_CommandList->Reset(commandAllocator.Get(), nullptr);
+
+	// Clear the render target.
+	{
+		CD3DX12_RESOURCE_BARRIER barrier = CD3DX12_RESOURCE_BARRIER::Transition(
+			backBuffer.Get(),
+			D3D12_RESOURCE_STATE_PRESENT,
+			D3D12_RESOURCE_STATE_RENDER_TARGET
+		);
+
+		g_CommandList->ResourceBarrier(1, &barrier);
+
+		CD3DX12_CPU_DESCRIPTOR_HANDLE rtv(
+			g_RTVDescriptorHeap->GetCPUDescriptorHandleForHeapStart(),
+			g_CurrentBackBufferIndex,
+			g_RTVDescriptorSize
+		);
+
+		g_CommandList->ClearRenderTargetView(rtv, g_BackgroundColors[g_BackgroundColorsIndex], 0, nullptr);
+	}
+
+	// Present.
+	{
+		CD3DX12_RESOURCE_BARRIER barrier = CD3DX12_RESOURCE_BARRIER::Transition(
+			backBuffer.Get(),
+			D3D12_RESOURCE_STATE_RENDER_TARGET,
+			D3D12_RESOURCE_STATE_PRESENT
+		);
+
+		g_CommandList->ResourceBarrier(1, &barrier);
+
+		ThrowIfFailed(g_CommandList->Close());
+
+		ID3D12CommandList* const commandLists[] = {
+			g_CommandList.Get()
+		};
+		g_CommandQueue->ExecuteCommandLists(_countof(commandLists), commandLists);
+
+		UINT syncInterval = g_VSync ? 1 : 0;
+		UINT presentFlags = g_TearingSupported && !g_VSync ? DXGI_PRESENT_ALLOW_TEARING : 0;
+		ThrowIfFailed(g_SwapChain->Present(syncInterval, presentFlags));
+		g_FrameFenceValues[g_CurrentBackBufferIndex] = Signal(g_CommandQueue, g_Fence, g_FenceValue);
+
+		g_CurrentBackBufferIndex = g_SwapChain->GetCurrentBackBufferIndex();
+		WaitForFenceValue(g_Fence, g_FrameFenceValues[g_CurrentBackBufferIndex], g_FenceEvent);
+	}
+}
+
+void Resize(uint32_t width, uint32_t height) {
+	if (g_ClientWidth != width || g_ClientHeight != height) {
+		g_ClientWidth = std::max(1u, width);
+		g_ClientHeight = std::max(1u, height);
+
+		Flush(g_CommandQueue, g_Fence, g_FenceValue, g_FenceEvent);
+
+		for (int i = 0; i < g_NumFrames; ++i) {
+			g_BackBuffers[i].Reset();
+			g_FrameFenceValues[i] = g_FrameFenceValues[g_CurrentBackBufferIndex];
+		}
+
+		DXGI_SWAP_CHAIN_DESC swapChainDesc = {};
+		ThrowIfFailed(g_SwapChain->GetDesc(&swapChainDesc));
+		ThrowIfFailed(g_SwapChain->ResizeBuffers(
+			g_NumFrames,
+			g_ClientWidth,
+			g_ClientHeight,
+			swapChainDesc.BufferDesc.Format,
+			swapChainDesc.Flags)
+		);
+
+		g_CurrentBackBufferIndex = g_SwapChain->GetCurrentBackBufferIndex();
+		
+		UpdateRenderTargetViews(g_Device, g_SwapChain, g_RTVDescriptorHeap);
+	}
+}
+
+void SetFullscreen(bool fullscreen) {
+	if (g_Fullscreen != fullscreen) {
+		g_Fullscreen = fullscreen;
+
+		if (g_Fullscreen) {
+			::GetWindowRect(g_hWnd, &g_WindowRect);
+
+			// Set the window style to a borderless window so the client area fills
+			// the entire screen.
+			UINT windowStyle = WS_OVERLAPPEDWINDOW &
+				~(WS_CAPTION | WS_SYSMENU | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX);
+			::SetWindowLongW(g_hWnd, GWL_STYLE, windowStyle);
+
+			HMONITOR hMonitor = ::MonitorFromWindow(g_hWnd, MONITOR_DEFAULTTONEAREST);
+			MONITORINFOEX monitorInfo = {};
+			monitorInfo.cbSize = sizeof(MONITORINFOEX);
+			::GetMonitorInfo(hMonitor, &monitorInfo);
+
+			::SetWindowPos(
+				g_hWnd, 
+				HWND_TOP,
+				monitorInfo.rcMonitor.left,
+				monitorInfo.rcMonitor.top,
+				monitorInfo.rcMonitor.right - monitorInfo.rcMonitor.left,
+				monitorInfo.rcMonitor.bottom - monitorInfo.rcMonitor.top,
+				SWP_FRAMECHANGED | SWP_NOACTIVATE);
+
+			::ShowWindow(g_hWnd, SW_MAXIMIZE);
+		} else {
+			// Restore all the window decorators.
+			::SetWindowLong(g_hWnd, GWL_STYLE, WS_OVERLAPPEDWINDOW);
+
+			::SetWindowPos(g_hWnd, HWND_NOTOPMOST,
+				g_WindowRect.left,
+				g_WindowRect.top,
+				g_WindowRect.right - g_WindowRect.left,
+				g_WindowRect.bottom - g_WindowRect.top,
+				SWP_FRAMECHANGED | SWP_NOACTIVATE);
+
+			::ShowWindow(g_hWnd, SW_NORMAL);
+		}
+	}
+}
+
+void ChangeBackgroundColor() {
+	g_BackgroundColorsIndex = (g_BackgroundColorsIndex + 1) % g_NumBackgroundColors;
+}
+
+LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) {
+	if (g_IsInitialized) {
+		switch (message)
+		{
+		case WM_PAINT:
+			Update();
+			Render();
+			break;
+		case WM_SYSKEYDOWN:
+		case WM_KEYDOWN:
+		{
+			bool alt = (::GetAsyncKeyState(VK_MENU) & 0x8000) != 0;
+
+			switch (wParam)
+			{
+			case 'V':
+				g_VSync = !g_VSync;
+				break;
+			case 'B':
+				ChangeBackgroundColor();
+				break;
+			case VK_ESCAPE:
+				::PostQuitMessage(0);
+				break;
+			case VK_RETURN:
+				if (alt)
+				{
+			case VK_F11:
+				SetFullscreen(!g_Fullscreen);
+				}
+				break;
+			}
+		}
+		break;
+		case WM_SYSCHAR:
+			break;
+		case WM_SIZE:
+		{
+			RECT clientRect = {};
+			::GetClientRect(g_hWnd, &clientRect);
+
+			int width = clientRect.right - clientRect.left;
+			int height = clientRect.bottom - clientRect.top;
+
+			Resize(width, height);
+		}
+		break;
+		case WM_DESTROY:
+			::PostQuitMessage(0);
+			break;
+		default:
+			return ::DefWindowProcW(hwnd, message, wParam, lParam);
+		}
+	} else {
+		return ::DefWindowProcW(hwnd, message, wParam, lParam);
+	}
+
+	return 0;
+}
+
 int CALLBACK wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR lpCmdLine, int nCmdShow)
 {	
-	const wchar_t* windowClassName = L"SomeWindow";
-	//RegisterWindowClass(hInstance, windowClassName);
-	//g_hWnd = CreateWindow(windowClassName, hInstance, L"Title", g_ClientWidth, g_ClientHeight);
+	SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+
+	const wchar_t* windowClassName = L"DX12WindowClass";
+
+	ParseCommandLineArguments();
+	RegisterWindowClass(hInstance, windowClassName);
+	g_hWnd = CreateWindow(windowClassName, hInstance, L"First window", g_ClientWidth, g_ClientHeight);
+	::GetWindowRect(g_hWnd, &g_WindowRect);
 
 	EnableDebugLayer();
+
+	g_TearingSupported = CheckTearingSupport();
 
 	ComPtr<IDXGIAdapter4> adaptor = GetAdapter(g_UseWarp);
 
@@ -418,11 +721,41 @@ int CALLBACK wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR lpCmdL
 	OutputDebugStringW(L"\n-----------\n");
 
 	g_Device = GetDevice(adaptor);
+	g_CommandQueue = CreateCommandQueue(g_Device, D3D12_COMMAND_LIST_TYPE_DIRECT);	
+	g_SwapChain = CreateSwapChain(g_hWnd, g_CommandQueue, g_ClientWidth, g_ClientHeight, g_NumFrames);
+	g_CurrentBackBufferIndex = g_SwapChain->GetCurrentBackBufferIndex();
+	g_RTVDescriptorHeap = CreateDescriptorHeap(g_Device, D3D12_DESCRIPTOR_HEAP_TYPE_RTV, g_NumFrames);
+	g_RTVDescriptorSize = g_Device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
+
+	UpdateRenderTargetViews(g_Device, g_SwapChain, g_RTVDescriptorHeap);
+
+	for (int i = 0; i < g_NumFrames; ++i) {
+		g_CommandAllocator[i] = CreateCommandAllocator(g_Device, D3D12_COMMAND_LIST_TYPE_DIRECT);
+	}
+
+	g_CommandList = CreateCommandList(
+		g_Device,
+		g_CommandAllocator[g_CurrentBackBufferIndex],
+		D3D12_COMMAND_LIST_TYPE_DIRECT
+	);
+
 	g_Fence = CreateFence(g_Device);
-	g_CommandQueue = CreateCommandQueue(g_Device, D3D12_COMMAND_LIST_TYPE_DIRECT);
-	g_CommandAllocator = CreateCommandAllocator(g_Device, D3D12_COMMAND_LIST_TYPE_DIRECT);
-	g_CommandList = CreateCommandList(g_Device, g_CommandAllocator, D3D12_COMMAND_LIST_TYPE_DIRECT);
-	//g_SwapChain = CreateSwapChain(g_hWnd, g_CommandQueue, g_ClientWidth, g_ClientHeight, g_NumFrames);
+	g_FenceEvent = CreateEventHandle();
+
+	g_IsInitialized = true;
+
+	::ShowWindow(g_hWnd, SW_SHOW);
+
+	MSG msg = {};
+	while (msg.message != WM_QUIT) {
+		if (::PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) {
+			::TranslateMessage(&msg);
+			::DispatchMessage(&msg);
+		}
+	}		
+
+	Flush(g_CommandQueue, g_Fence, g_FenceValue, g_FenceEvent);
+	::CloseHandle(g_FenceEvent);
 
 	return 0;
 }
