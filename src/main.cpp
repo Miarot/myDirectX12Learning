@@ -59,6 +59,109 @@ void EnableDebugLayer() {
 #endif
 }
 
+// Window handle.
+HWND g_hWnd;
+// Window rectangle (used to toggle fullscreen state).
+RECT g_WindowRect;
+
+// DirectX 12 Objects
+ComPtr<ID3D12Device2> g_Device;
+ComPtr<ID3D12CommandQueue> g_CommandQueue;
+ComPtr<ID3D12GraphicsCommandList> g_CommandList;
+ComPtr<ID3D12CommandAllocator> g_CommandAllocator;
+ComPtr<IDXGISwapChain4> g_SwapChain;
+
+// Synchronization objects
+ComPtr<ID3D12Fence> g_Fence;
+
+// Window callback function.
+//LRESULT CALLBACK WndProc(HWND, UINT, WPARAM, LPARAM);
+
+void ParseCommandLineArguments() {
+	int argc;
+	wchar_t** argv = ::CommandLineToArgvW(::GetCommandLineW(), &argc);
+
+	for (size_t i = 0; i < argc; ++i)
+	{
+		if (::wcscmp(argv[i], L"-w") == 0 || ::wcscmp(argv[i], L"--width") == 0)
+		{
+			g_ClientWidth = ::wcstol(argv[++i], nullptr, 10);
+		}
+		if (::wcscmp(argv[i], L"-h") == 0 || ::wcscmp(argv[i], L"--height") == 0)
+		{
+			g_ClientHeight = ::wcstol(argv[++i], nullptr, 10);
+		}
+		if (::wcscmp(argv[i], L"-warp") == 0 || ::wcscmp(argv[i], L"--warp") == 0)
+		{
+			g_UseWarp = true;
+		}
+	}
+
+	// Free memory allocated by CommandLineToArgvW
+	::LocalFree(argv);
+}
+
+//void RegisterWindowClass(HINSTANCE hInst, const wchar_t* windowClassName) {
+//	// Register a window class for creating our render window with.
+//	WNDCLASSEXW windowClass = {};
+//
+//	windowClass.cbSize = sizeof(WNDCLASSEX);
+//	windowClass.style = CS_HREDRAW | CS_VREDRAW;
+//	windowClass.lpfnWndProc = &WndProc;
+//	windowClass.cbClsExtra = 0;
+//	windowClass.cbWndExtra = 0;
+//	windowClass.hInstance = hInst;
+//	windowClass.hIcon = ::LoadIcon(hInst, NULL);
+//	windowClass.hCursor = ::LoadCursor(NULL, IDC_ARROW);
+//	windowClass.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
+//	windowClass.lpszMenuName = NULL;
+//	windowClass.lpszClassName = windowClassName;
+//	windowClass.hIconSm = ::LoadIcon(hInst, NULL);
+//
+//	static ATOM atom = ::RegisterClassExW(&windowClass);
+//	assert(atom > 0);
+//}
+
+HWND CreateWindow(
+	const wchar_t* windowClassName,
+	HINSTANCE hInst, 
+	const wchar_t* windowTitle, 
+	uint32_t width, 
+	uint32_t height)
+{
+	int screenWidth = ::GetSystemMetrics(SM_CXSCREEN);
+	int screenHeight = ::GetSystemMetrics(SM_CYSCREEN);
+
+	RECT windowRect = { 0, 0, static_cast<LONG>(width), static_cast<LONG>(height) };
+	::AdjustWindowRect(&windowRect, WS_OVERLAPPEDWINDOW, FALSE);
+
+	int windowWidth = windowRect.right - windowRect.left;
+	int windowHeight = windowRect.bottom - windowRect.top;
+
+	// Center the window within the screen. Clamp to 0, 0 for the top-left corner.
+	int windowX = std::max<int>(0, (screenWidth - windowWidth) / 2);
+	int windowY = std::max<int>(0, (screenHeight - windowHeight) / 2);
+
+	HWND hWnd = ::CreateWindowExW(
+		NULL,
+		windowClassName,
+		windowTitle,
+		WS_OVERLAPPEDWINDOW,
+		windowX,
+		windowY,
+		windowWidth,
+		windowHeight,
+		NULL,
+		NULL,
+		hInst,
+		nullptr
+	);
+
+	assert(hWnd && "Failed to create window");
+
+	return hWnd;
+}
+
 ComPtr<IDXGIAdapter4> GetAdapter(bool useWarp) {
 	ComPtr<IDXGIFactory4> dxgiFactory;
 	UINT createFactoryFlags = 0;
@@ -206,6 +309,32 @@ ComPtr<ID3D12GraphicsCommandList> CreateCommandList(
 	return commandList;
 }
 
+bool CheckTearingSupport() {
+	BOOL allowTearing = FALSE;
+
+	// Rather than create the DXGI 1.5 factory interface directly, we create the
+	// DXGI 1.4 interface and query for the 1.5 interface. This is to enable the 
+	// graphics debugging tools which will not support the 1.5 factory interface 
+	// until a future update.
+	ComPtr<IDXGIFactory4> factory4;
+
+	if (SUCCEEDED(CreateDXGIFactory1(IID_PPV_ARGS(&factory4)))) {
+		ComPtr<IDXGIFactory5> factory5;
+
+		if (SUCCEEDED(factory4.As(&factory5))) {
+			if (FAILED(factory5->CheckFeatureSupport(
+				DXGI_FEATURE_PRESENT_ALLOW_TEARING,
+				&allowTearing, sizeof(allowTearing)
+			)))
+			{
+				allowTearing = FALSE;
+			}
+		}
+	}
+
+	return allowTearing == TRUE;
+}
+
 ComPtr<IDXGISwapChain4> CreateSwapChain(
 	HWND hWnd,
 	ComPtr<ID3D12CommandQueue> commandQueue,
@@ -233,6 +362,8 @@ ComPtr<IDXGISwapChain4> CreateSwapChain(
 	swapChainDesc.Scaling = DXGI_SCALING_STRETCH;
 	swapChainDesc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
 	swapChainDesc.AlphaMode = DXGI_ALPHA_MODE_UNSPECIFIED;
+	// It is recommended to always allow tearing if tearing support is available.
+	swapChainDesc.Flags = CheckTearingSupport() ? DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING : 0;
 
 	ComPtr<IDXGISwapChain1> swapChain1;
 	ThrowIfFailed(dxgiFactory4->CreateSwapChainForHwnd(
@@ -253,20 +384,45 @@ ComPtr<IDXGISwapChain4> CreateSwapChain(
 	return dxgiSwapChain4;
 }
 
-int CALLBACK wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR lpCmdLine, int nCmdShow)
+ComPtr<ID3D12DescriptorHeap> CreateDescriptorHeap(
+	ComPtr<ID3D12Device2> device,
+	D3D12_DESCRIPTOR_HEAP_TYPE type,
+	uint32_t numDescriptors)
 {
+	ComPtr<ID3D12DescriptorHeap> descriptroHeap;
+
+	D3D12_DESCRIPTOR_HEAP_DESC desc = {};
+	desc.NumDescriptors = numDescriptors;
+	desc.Type = type;
+
+	ThrowIfFailed(device->CreateDescriptorHeap(&desc, IID_PPV_ARGS(&descriptroHeap)));
+
+	return descriptroHeap;
+}
+
+int CALLBACK wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR lpCmdLine, int nCmdShow)
+{	
+	const wchar_t* windowClassName = L"SomeWindow";
+	//RegisterWindowClass(hInstance, windowClassName);
+	//g_hWnd = CreateWindow(windowClassName, hInstance, L"Title", g_ClientWidth, g_ClientHeight);
+
 	EnableDebugLayer();
+
 	ComPtr<IDXGIAdapter4> adaptor = GetAdapter(g_UseWarp);
 
 	DXGI_ADAPTER_DESC1 adaptorDesc;
 	adaptor->GetDesc1(&adaptorDesc);
 	std::wstring text = adaptorDesc.Description;
+	OutputDebugStringW(L"-----------\n");
+	OutputDebugStringW(text.c_str());
+	OutputDebugStringW(L"\n-----------\n");
 
-	ComPtr<ID3D12Device2> device = GetDevice(adaptor);
-	ComPtr<ID3D12Fence> fence = CreateFence(device);
-	ComPtr<ID3D12CommandQueue> commandQueue = CreateCommandQueue(device, D3D12_COMMAND_LIST_TYPE_DIRECT);
-	ComPtr<ID3D12CommandAllocator> commandAllocator = CreateCommandAllocator(device, D3D12_COMMAND_LIST_TYPE_DIRECT);
-	ComPtr<ID3D12GraphicsCommandList> commandList = CreateCommandList(device, commandAllocator, D3D12_COMMAND_LIST_TYPE_DIRECT);
+	g_Device = GetDevice(adaptor);
+	g_Fence = CreateFence(g_Device);
+	g_CommandQueue = CreateCommandQueue(g_Device, D3D12_COMMAND_LIST_TYPE_DIRECT);
+	g_CommandAllocator = CreateCommandAllocator(g_Device, D3D12_COMMAND_LIST_TYPE_DIRECT);
+	g_CommandList = CreateCommandList(g_Device, g_CommandAllocator, D3D12_COMMAND_LIST_TYPE_DIRECT);
+	//g_SwapChain = CreateSwapChain(g_hWnd, g_CommandQueue, g_ClientWidth, g_ClientHeight, g_NumFrames);
 
 	return 0;
 }
