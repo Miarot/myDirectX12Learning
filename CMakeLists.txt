@@ -24,6 +24,11 @@ set( HEADER_FILES
     inc/Application.h
     inc/CommandQueue.h
     inc/Game.h
+    inc/Events.h
+    inc/KeyCodes.h
+    inc/HighResolutionClock.h
+    inc/DX12LibPCH.h
+    inc/resource.h
 )
 
 set( SRC_FILES
@@ -32,6 +37,7 @@ set( SRC_FILES
     src/Application.cpp
     src/CommandQueue.cpp
     src/Game.cpp
+    src/HighResolutionClock.cpp
 )
 
 add_executable( ${TARGET_NAME} WIN32
