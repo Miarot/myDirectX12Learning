@@ -20,10 +20,18 @@ set( TARGET_NAME myDirextX12Learning )
 set( HEADER_FILES
     inc/d3dx12.h
     inc/Helpers.h
+    inc/Window.h
+    inc/Application.h
+    inc/CommandQueue.h
+    inc/Game.h
 )
 
 set( SRC_FILES
     src/main.cpp
+    src/Window.cpp
+    src/Application.cpp
+    src/CommandQueue.cpp
+    src/Game.cpp
 )
 
 add_executable( ${TARGET_NAME} WIN32
