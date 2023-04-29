@@ -60,9 +60,7 @@ void GameImpl::OnRender(RenderEventArgs& e) {
             D3D12_RESOURCE_STATE_RENDER_TARGET
         );
 
-        FLOAT clearColor[] = { 0.4f, 0.6f, 0.9f, 1.0f };
-
-        ClearRTV(commandList, rtv, clearColor);
+        ClearRTV(commandList, rtv, bgColors[bgColorIndex]);
     }
 
     // Present.
@@ -98,6 +96,9 @@ void GameImpl::OnKeyPressed(KeyEventArgs& e)
         }
     case KeyCode::V:
         m_pWindow->ToggleVSync();
+        break;
+    case KeyCode::B:
+        bgColorIndex = (bgColorIndex + 1) % bgColorsAmmount;
         break;
     }
 }
