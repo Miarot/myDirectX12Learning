@@ -83,4 +83,5 @@ target_link_libraries( ${TARGET_NAME}
     PUBLIC dxgi.lib
     PUBLIC dxguid.lib
     PUBLIC Shlwapi.lib
+    PUBLIC D3DCompiler.lib
 )

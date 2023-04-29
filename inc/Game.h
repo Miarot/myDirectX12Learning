@@ -15,6 +15,16 @@ public:
 	Game(const std::wstring& name, int width, int height, bool vSync);
 	virtual ~Game();
 
+    int GetClientWidth() const
+    {
+        return m_Width;
+    }
+
+    int GetClientHeight() const
+    {
+        return m_Height;
+    }
+
     /**
      *  Initialize the DirectX Runtime.
      */
