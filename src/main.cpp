@@ -18,14 +18,14 @@ void ReportLiveObjects() {
 int CALLBACK wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR lpCmdLine, int nCmdShow) {
     int retCode = 0;
 
-    //// Set the working directory to the path of the executable.
-    //WCHAR path[MAX_PATH];
-    //HMODULE hModule = GetModuleHandleW(NULL);
-    //if (GetModuleFileNameW(hModule, path, MAX_PATH) > 0)
-    //{
-    //    PathRemoveFileSpecW(path);
-    //    SetCurrentDirectoryW(path);
-    //}
+    //Set the working directory to the path of the executable.
+    WCHAR path[MAX_PATH];
+    HMODULE hModule = GetModuleHandleW(NULL);
+    if (GetModuleFileNameW(hModule, path, MAX_PATH) > 0)
+    {
+        PathRemoveFileSpecW(path);
+        SetCurrentDirectoryW(path);
+    }
 
     Application::Create(hInstance);
     {

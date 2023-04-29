@@ -1,7 +1,7 @@
 #include <DX12LibPCH.h>
-#include <resource.h>
-
 #include <Application.h>
+#include "../resource.h"
+
 #include <Game.h>
 #include <CommandQueue.h>
 #include <Window.h>
@@ -42,12 +42,12 @@ void Application::RegisterWindowClass() {
     windowClass.style = CS_HREDRAW | CS_VREDRAW;
     windowClass.lpfnWndProc = &WndProc;
     windowClass.hInstance = m_hInstance;
-    windowClass.hIcon = ::LoadIcon(m_hInstance, MAKEINTRESOURCE(APP_ICON));
-    windowClass.hCursor = ::LoadCursor(NULL, IDC_ARROW);
+    windowClass.hCursor = LoadCursor(nullptr, IDC_ARROW);
+    windowClass.hIcon = LoadIcon(m_hInstance, MAKEINTRESOURCE(APP_ICON));
     windowClass.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
-    windowClass.lpszMenuName = NULL;
+    windowClass.lpszMenuName = nullptr;
     windowClass.lpszClassName = WINDOW_CLASS_NAME;
-    windowClass.hIconSm = ::LoadIcon(m_hInstance, MAKEINTRESOURCE(APP_ICON));
+    windowClass.hIconSm = LoadIcon(m_hInstance, MAKEINTRESOURCE(APP_ICON));
 
     if (!RegisterClassExW(&windowClass))
     {
