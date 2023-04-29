@@ -81,6 +81,8 @@ ComPtr<IDXGISwapChain4> Window::CreateSwapChain() {
 
 	ThrowIfFailed(swapChain1.As(&dxgiSwapChain4));
 
+	m_CurrentBackBufferIndex = dxgiSwapChain4->GetCurrentBackBufferIndex();
+
 	return dxgiSwapChain4;
 }
 
@@ -343,6 +345,7 @@ D3D12_CPU_DESCRIPTOR_HANDLE Window::GetCurrentRenderTargetView() const
 
 Microsoft::WRL::ComPtr<ID3D12Resource> Window::GetCurrentBackBuffer() const
 {
+	int a = BufferCount;
 	return m_d3d12BackBuffers[m_CurrentBackBufferIndex];
 }
 

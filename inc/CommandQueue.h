@@ -10,8 +10,7 @@
 #include <cstdint>  // For uint64_t
 #include <queue>    // For std::queue
 
-class CommandQueue
-{
+class CommandQueue {
 public:
     CommandQueue(Microsoft::WRL::ComPtr<ID3D12Device2> device, D3D12_COMMAND_LIST_TYPE type);
     virtual ~CommandQueue();
@@ -36,8 +35,7 @@ protected:
 
 private:
     // Keep track of command allocators that are "in-flight"
-    struct CommandAllocatorEntry
-    {
+    struct CommandAllocatorEntry {
         uint64_t fenceValue;
         Microsoft::WRL::ComPtr<ID3D12CommandAllocator> commandAllocator;
     };

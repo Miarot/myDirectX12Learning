@@ -18,6 +18,7 @@ set_directory_properties( PROPERTIES
 set( TARGET_NAME myDirextX12Learning )
 
 set( HEADER_FILES
+    inc/GameImpl.h
     inc/d3dx12.h
     inc/Helpers.h
     inc/Window.h
@@ -33,6 +34,7 @@ set( HEADER_FILES
 
 set( SRC_FILES
     src/main.cpp
+    src/GameImpl.cpp
     src/Window.cpp
     src/Application.cpp
     src/CommandQueue.cpp

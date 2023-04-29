@@ -137,7 +137,7 @@ bool Application::CheckTearingSupport() {
 }
 
 bool Application::IsTearingSupported() const {
-	return IsTearingSupported;
+	return m_TearingSupported;
 }
 
 std::shared_ptr<CommandQueue> Application::GetCommandQueue(D3D12_COMMAND_LIST_TYPE type) const {
