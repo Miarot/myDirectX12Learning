@@ -499,7 +499,7 @@ void GameImpl::UpdateProjectionMatrix() {
     m_ProjectionMatrix = XMMatrixTranspose(m_ProjectionMatrix);
 
     if (m_Shake) {
-        XMVECTOR pixelNorm = { 2.0f / GetClientWidth(), 2.0f / GetClientHeight(), 1.0f, 0.0f };
+        XMVECTOR pixelNorm = { 2.0f / GetClientWidth(), 2.0f / GetClientHeight(), 0.0f, 0.0f };
         XMVECTOR displacement = m_ShakeDirections[m_ShakeDirectionIndex] * pixelNorm;
 
         m_ProjectionMatrix.r[2] += displacement * m_ShakePixelAmplitude;
