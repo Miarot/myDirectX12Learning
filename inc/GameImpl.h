@@ -5,6 +5,7 @@
 #include <Game.h>
 #include <Window.h>
 
+#include <vector>
 
 
 class GameImpl : public Game {
@@ -115,12 +116,15 @@ private:
 
     bool m_ContentLoaded;
     
-    static const  int bgColorsAmmount = 3;
-    int bgColorIndex = 0;
-    FLOAT bgColors[bgColorsAmmount][4] = {
-        { 0.4f, 0.6f, 0.9f, 1.0f },
-        { 0.6f, 0.9f, 0.3f, 1.0f },
-        { 0.8f, 0.7f, 0.2f, 1.0f }
-    };
+    void UpdateProjectionMatrix();
 
+    // bg color
+    std::vector<std::vector<FLOAT>> m_bgColors;
+    size_t m_bgColorIndex;
+
+    // shake
+    bool m_Shake;
+    std::vector<DirectX::XMVECTOR> m_ShakeDirections;
+    size_t m_ShakeDirectionIndex;
+    float m_ShakePixelAmplitude;
 };

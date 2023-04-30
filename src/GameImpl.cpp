@@ -11,6 +11,7 @@ using namespace Microsoft::WRL;
 #include <d3dx12.h>
 #include <d3dcompiler.h>
 
+#include <vector>
 #include <algorithm> // For std::min and std::max.
 #if defined(min)
 #undef min
@@ -61,7 +62,24 @@ GameImpl::GameImpl(const std::wstring& name, int width, int height, bool vSync)
     , m_Viewport(CD3DX12_VIEWPORT(0.0f, 0.0f, static_cast<float>(width), static_cast<float>(height)))
     , m_FoV(45.0)
     , m_ContentLoaded(false)
-{}
+    , m_bgColorIndex(0)
+    , m_Shake(false)
+    , m_ShakePixelAmplitude(10.0f)
+    , m_ShakeDirectionIndex(0)
+{
+    m_bgColors = {
+        { 0.4f, 0.6f, 0.9f, 1.0f },
+        { 0.6f, 0.9f, 0.3f, 1.0f },
+        { 0.8f, 0.7f, 0.2f, 1.0f }
+    };
+
+    m_ShakeDirections = {
+        { 0.0f,     1.0f,  0.0f,    0.0f },
+        { 0.0f,     -1.0f, 0.0f,    0.0f },
+        { 1.0f,     0.0f,  0.0f,    0.0f },
+        { -1.0f,    0.0f,  0.0f,    0.0f }
+    };
+}
 
 void GameImpl::UpdateBufferResource(
     ComPtr<ID3D12GraphicsCommandList2> commandList,
@@ -271,8 +289,7 @@ void GameImpl::OnUpdate(UpdateEventArgs& e) {
     m_ViewMatrix = XMMatrixLookAtLH(eyePosition, focusPoint, upDirection);
 
     // Update the projection matrix.
-    float aspectRatio = GetClientWidth() / static_cast<float>(GetClientHeight());
-    m_ProjectionMatrix = XMMatrixPerspectiveFovLH(XMConvertToRadians(m_FoV), aspectRatio, 0.1f, 100.0f);
+    UpdateProjectionMatrix();
 }
 
 void GameImpl::OnRender(RenderEventArgs& e) {
@@ -295,7 +312,7 @@ void GameImpl::OnRender(RenderEventArgs& e) {
             D3D12_RESOURCE_STATE_RENDER_TARGET
         );
 
-        ClearRTV(commandList, rtv, bgColors[bgColorIndex]);
+        ClearRTV(commandList, rtv, m_bgColors[m_bgColorIndex].data());
         ClearDepth(commandList, dsv);
     }
 
@@ -353,7 +370,10 @@ void GameImpl::OnKeyPressed(KeyEventArgs& e)
         m_pWindow->ToggleVSync();
         break;
     case KeyCode::B:
-        bgColorIndex = (bgColorIndex + 1) % bgColorsAmmount;
+        m_bgColorIndex = (m_bgColorIndex + 1) % m_bgColors.size();
+        break;
+    case KeyCode::S:
+        m_Shake = !m_Shake;
         break;
     }
 }
@@ -454,4 +474,35 @@ void GameImpl::ClearDepth(
     FLOAT depth) 
 {
     commandList->ClearDepthStencilView(dsv, D3D12_CLEAR_FLAG_DEPTH, depth, 0, 0, nullptr);
+}
+
+void GameImpl::UpdateProjectionMatrix() {
+    float aspectRatio = GetClientHeight() / static_cast<float>(GetClientWidth());
+    float focalLengh = 1 / tan(XMConvertToRadians(m_FoV) / 2);
+
+    float n = 0.1f;
+    float f = 100.0f;
+
+    float l = -n / focalLengh;
+    float r = n / focalLengh;
+    float b = -aspectRatio * n / focalLengh;
+    float t = aspectRatio * n / focalLengh;
+
+    float alpha = 0.0f;
+    float beta = 1.0f;
+
+    XMVECTOR xProj = { 2 * n / (r - l), 0.0f, (r + l) / (r - l), 0.0f };
+    XMVECTOR yProj = { 0.0f, 2 * n / (t - b), (t + b) / (t - b), 0.0f };
+    XMVECTOR zProj = { 0.0f, 0.0f, -(alpha * n - beta * f) / (f - n), (alpha - beta) * n * f / (f - n) };
+    XMVECTOR wProj = { 0.0f, 0.0f, 1.0f, 0.0f };
+    m_ProjectionMatrix = { xProj, yProj, zProj, wProj };
+    m_ProjectionMatrix = XMMatrixTranspose(m_ProjectionMatrix);
+
+    if (m_Shake) {
+        XMVECTOR pixelNorm = { 2.0f / GetClientWidth(), 2.0f / GetClientHeight(), 1.0f, 0.0f };
+        XMVECTOR displacement = m_ShakeDirections[m_ShakeDirectionIndex] * pixelNorm;
+
+        m_ProjectionMatrix.r[2] += displacement * m_ShakePixelAmplitude;
+        m_ShakeDirectionIndex = (m_ShakeDirectionIndex + 1) % m_ShakeDirections.size();
+    }
 }
