@@ -66,6 +66,7 @@ GameImpl::GameImpl(const std::wstring& name, int width, int height, bool vSync)
     , m_Shake(false)
     , m_ShakePixelAmplitude(10.0f)
     , m_ShakeDirectionIndex(0)
+    , m_InverseDepth(false)
 {
     m_bgColors = {
         { 0.4f, 0.6f, 0.9f, 1.0f },
@@ -170,20 +171,6 @@ bool GameImpl::LoadContent() {
     dsvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
     ThrowIfFailed(device->CreateDescriptorHeap(&dsvHeapDesc, IID_PPV_ARGS(&m_DSVHeap)));
 
-    // Load the vertex shader.
-    ComPtr<ID3DBlob> vertexShaderBlob;
-    ThrowIfFailed(D3DReadFileToBlob(L"VertexShader.cso", &vertexShaderBlob));
-
-    // Load the pixel shader.
-    ComPtr<ID3DBlob> pixelShaderBlob;
-    ThrowIfFailed(D3DReadFileToBlob(L"PixelShader.cso", &pixelShaderBlob));
-
-    // Create the vertex input layout
-    D3D12_INPUT_ELEMENT_DESC inputLayout[] = {
-        { "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, D3D12_APPEND_ALIGNED_ELEMENT, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
-        { "COLOR", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, D3D12_APPEND_ALIGNED_ELEMENT, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
-    };
-
     // Create a root signature.
     D3D12_FEATURE_DATA_ROOT_SIGNATURE featureData = {};
     featureData.HighestVersion = D3D_ROOT_SIGNATURE_VERSION_1_1;
@@ -213,9 +200,53 @@ bool GameImpl::LoadContent() {
         &rootSignatureDescription,
         featureData.HighestVersion, &rootSignatureBlob, &errorBlob
     ));
+
     // Create the root signature.
     ThrowIfFailed(device->CreateRootSignature(0, rootSignatureBlob->GetBufferPointer(),
         rootSignatureBlob->GetBufferSize(), IID_PPV_ARGS(&m_RootSignature)));
+
+    UpdatePipelineState();
+
+    auto fenceValue = commandQueue->ExecuteCommandList(commandList);
+    commandQueue->WaitForFenceValue(fenceValue);
+
+    m_ContentLoaded = true;
+
+    // Resize/Create the depth buffer.
+    ResizeDepthBuffer(GetClientWidth(), GetClientHeight());
+
+    return true;
+}
+
+void GameImpl::UpdatePipelineState() {
+    auto device = Application::Get().GetDevice();
+
+    // Load the vertex shader.
+    ComPtr<ID3DBlob> vertexShaderBlob;
+    ThrowIfFailed(D3DReadFileToBlob(L"VertexShader.cso", &vertexShaderBlob));
+
+    // Load the pixel shader.
+    ComPtr<ID3DBlob> pixelShaderBlob;
+    ThrowIfFailed(D3DReadFileToBlob(L"PixelShader.cso", &pixelShaderBlob));
+
+    // Create the vertex input layout
+    D3D12_INPUT_ELEMENT_DESC inputLayout[] = {
+        { "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, D3D12_APPEND_ALIGNED_ELEMENT, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+        { "COLOR", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, D3D12_APPEND_ALIGNED_ELEMENT, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+    };
+
+    // Create depht stencil desc
+    CD3DX12_DEPTH_STENCIL_DESC depthStencilDesc;
+    depthStencilDesc.DepthEnable = TRUE;
+    depthStencilDesc.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ALL;
+    depthStencilDesc.StencilEnable = FALSE;
+
+    if (m_InverseDepth) {
+        depthStencilDesc.DepthFunc = D3D12_COMPARISON_FUNC_GREATER;
+    }
+    else {
+        depthStencilDesc.DepthFunc = D3D12_COMPARISON_FUNC_LESS;
+    }
 
     struct PipelineStateStream {
         CD3DX12_PIPELINE_STATE_STREAM_ROOT_SIGNATURE pRootSignature;
@@ -223,6 +254,7 @@ bool GameImpl::LoadContent() {
         CD3DX12_PIPELINE_STATE_STREAM_PRIMITIVE_TOPOLOGY PrimitiveTopologyType;
         CD3DX12_PIPELINE_STATE_STREAM_VS VS;
         CD3DX12_PIPELINE_STATE_STREAM_PS PS;
+        CD3DX12_PIPELINE_STATE_STREAM_DEPTH_STENCIL DepthStencilState;
         CD3DX12_PIPELINE_STATE_STREAM_DEPTH_STENCIL_FORMAT DSVFormat;
         CD3DX12_PIPELINE_STATE_STREAM_RENDER_TARGET_FORMATS RTVFormats;
     } pipelineStateStream;
@@ -236,26 +268,22 @@ bool GameImpl::LoadContent() {
     pipelineStateStream.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
     pipelineStateStream.VS = CD3DX12_SHADER_BYTECODE(vertexShaderBlob.Get());
     pipelineStateStream.PS = CD3DX12_SHADER_BYTECODE(pixelShaderBlob.Get());
+    pipelineStateStream.DepthStencilState = CD3DX12_PIPELINE_STATE_STREAM_DEPTH_STENCIL(depthStencilDesc);
     pipelineStateStream.DSVFormat = DXGI_FORMAT_D32_FLOAT;
     pipelineStateStream.RTVFormats = rtvFormats;
 
     D3D12_PIPELINE_STATE_STREAM_DESC pipelineStateStreamDesc = {
-       sizeof(PipelineStateStream), &pipelineStateStream
+        sizeof(PipelineStateStream), &pipelineStateStream
     };
+
     ThrowIfFailed(device->CreatePipelineState(&pipelineStateStreamDesc, IID_PPV_ARGS(&m_PipelineState)));
 
-    auto fenceValue = commandQueue->ExecuteCommandList(commandList);
-    commandQueue->WaitForFenceValue(fenceValue);
-
-    m_ContentLoaded = true;
-
-    // Resize/Create the depth buffer.
     ResizeDepthBuffer(GetClientWidth(), GetClientHeight());
-
-    return true;
 }
 
-void GameImpl::UnloadContent() {}
+void GameImpl::UnloadContent() {
+    m_ContentLoaded = false;
+}
 
 void GameImpl::OnUpdate(UpdateEventArgs& e) {
     static uint64_t frameCount = 0;
@@ -318,7 +346,12 @@ void GameImpl::OnRender(RenderEventArgs& e) {
         );
 
         ClearRTV(commandList, rtv, m_bgColors[m_bgColorIndex].data());
-        ClearDepth(commandList, dsv);
+
+        if (m_InverseDepth) {
+            ClearDepth(commandList, dsv, 0.0f);
+        } else {
+            ClearDepth(commandList, dsv, 1.0f);
+        }
     }
 
     commandList->SetPipelineState(m_PipelineState.Get());
@@ -386,6 +419,9 @@ void GameImpl::OnKeyPressed(KeyEventArgs& e)
     case KeyCode::S:
         m_Shake = !m_Shake;
         break;
+    case KeyCode::Z:
+        m_InverseDepth = !m_InverseDepth;
+        UpdatePipelineState();
     }
 }
 
@@ -415,7 +451,13 @@ void GameImpl::ResizeDepthBuffer(int width, int height)
         // Create a depth buffer.
         D3D12_CLEAR_VALUE optimizedClearValue = {};
         optimizedClearValue.Format = DXGI_FORMAT_D32_FLOAT;
-        optimizedClearValue.DepthStencil = { 1.0f, 0 };
+
+        if (m_InverseDepth) {
+            optimizedClearValue.DepthStencil = { 0.0f, 0 };
+        } else {
+            optimizedClearValue.DepthStencil = { 1.0f, 0 };
+        }
+        
 
         ThrowIfFailed(device->CreateCommittedResource(
             &CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT),
@@ -501,6 +543,11 @@ void GameImpl::UpdateProjectionMatrix() {
 
     float alpha = 0.0f;
     float beta = 1.0f;
+
+    if (m_InverseDepth) {
+        alpha = 1.0f;
+        beta = 0.0f;
+    }
 
     XMVECTOR xProj = { 2 * n / (r - l), 0.0f, (r + l) / (r - l), 0.0f };
     XMVECTOR yProj = { 0.0f, 2 * n / (t - b), (t + b) / (t - b), 0.0f };

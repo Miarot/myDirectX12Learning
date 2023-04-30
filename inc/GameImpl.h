@@ -69,7 +69,7 @@ private:
     void ClearDepth(
         ComPtr<ID3D12GraphicsCommandList2> commandList,
         D3D12_CPU_DESCRIPTOR_HANDLE dsv,
-        FLOAT depth = 1.0f
+        FLOAT depth
     );
 
     // Create a GPU buffer.
@@ -127,4 +127,9 @@ private:
     std::vector<DirectX::XMVECTOR> m_ShakeDirections;
     size_t m_ShakeDirectionIndex;
     float m_ShakePixelAmplitude;
+
+    // depth stencil state;
+    bool m_InverseDepth;
+
+    void UpdatePipelineState();
 };
