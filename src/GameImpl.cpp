@@ -279,8 +279,13 @@ void GameImpl::OnUpdate(UpdateEventArgs& e) {
 
     // Update the model matrix.
     float angle = static_cast<float>(e.TotalTime * 90.0);
-    const XMVECTOR rotationAxis = XMVectorSet(0, 1, 1, 0);
-    m_ModelMatrix = XMMatrixRotationAxis(rotationAxis, XMConvertToRadians(angle));
+    XMVECTOR rotationAxis = XMVectorSet(0, 1, 1, 0);
+    m_ModelMatrixes[0] = XMMatrixRotationAxis(rotationAxis, XMConvertToRadians(angle));
+    m_ModelMatrixes[0] = XMMatrixMultiply(m_ModelMatrixes[0], XMMatrixTranslation(0.0f, 0.0f, 0.0f));
+
+    rotationAxis = XMVectorSet(0, 1, 0, 0);
+    m_ModelMatrixes[1] = XMMatrixTranslation(3.0f, 0.0f, 0.0f);
+    m_ModelMatrixes[1] = XMMatrixMultiply(m_ModelMatrixes[1], XMMatrixRotationAxis(rotationAxis, XMConvertToRadians(-angle)));
 
     // Update the view matrix.
     const XMVECTOR eyePosition = XMVectorSet(0, 0, -10, 1);
@@ -329,7 +334,13 @@ void GameImpl::OnRender(RenderEventArgs& e) {
     commandList->OMSetRenderTargets(1, &rtv, FALSE, &dsv);
 
     // Update the MVP matrix
-    XMMATRIX mvpMatrix = XMMatrixMultiply(m_ModelMatrix, m_ViewMatrix);
+    XMMATRIX mvpMatrix = XMMatrixMultiply(m_ModelMatrixes[0], m_ViewMatrix);
+    mvpMatrix = XMMatrixMultiply(mvpMatrix, m_ProjectionMatrix);
+    commandList->SetGraphicsRoot32BitConstants(0, sizeof(XMMATRIX) / 4, &mvpMatrix, 0);
+
+    commandList->DrawIndexedInstanced(_countof(g_Indicies), 1, 0, 0, 0);
+
+    mvpMatrix = XMMatrixMultiply(m_ModelMatrixes[1], m_ViewMatrix);
     mvpMatrix = XMMatrixMultiply(mvpMatrix, m_ProjectionMatrix);
     commandList->SetGraphicsRoot32BitConstants(0, sizeof(XMMATRIX) / 4, &mvpMatrix, 0);
 

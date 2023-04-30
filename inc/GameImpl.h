@@ -110,7 +110,7 @@ private:
 
     float m_FoV;
 
-    DirectX::XMMATRIX m_ModelMatrix;
+    DirectX::XMMATRIX m_ModelMatrixes[2];
     DirectX::XMMATRIX m_ViewMatrix;
     DirectX::XMMATRIX m_ProjectionMatrix;
 

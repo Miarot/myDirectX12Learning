@@ -29,7 +29,7 @@ int CALLBACK wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR lpCmdL
 
     Application::Create(hInstance);
     {
-        std::shared_ptr<GameImpl> demo = std::make_shared<GameImpl>(L"Fresh screen", 1280, 720);
+        std::shared_ptr<GameImpl> demo = std::make_shared<GameImpl>(L"Cubes rotations", 1280, 720);
         retCode = Application::Get().Run(demo);
     }
     Application::Destroy();
